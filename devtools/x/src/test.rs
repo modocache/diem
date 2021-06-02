@@ -61,7 +61,13 @@ pub fn run(mut args: Args, xctx: XContext) -> Result<()> {
     let generate_coverage = args.html_cov_dir.is_some() || args.html_lcov_dir.is_some();
 
     let env_vars: &[(&str, Option<&str>)] = if generate_coverage {
-        if !xctx.installer().install_if_needed("grcov") {
+        if !xctx
+            .installer()
+            .install_via_rustup_if_needed("llvm-tools-preview")
+        {
+            return Err(anyhow!("Could not install llvm-tools-preview"));
+        }
+        if !xctx.installer().install_via_cargo_if_needed("grcov") {
             return Err(anyhow!("Could not install grcov"));
         }
         info!("Running \"cargo clean\" before collecting coverage");
@@ -73,14 +79,17 @@ pub fn run(mut args: Args, xctx: XContext) -> Result<()> {
             ("RUSTC_BOOTSTRAP", Some("1")),
             // Recommend setting for grcov, avoids using the cargo cache.
             ("CARGO_INCREMENTAL", Some("0")),
+            //determines how to tie the coverage data back to source, one per execution.
+            ("LLVM_PROFILE_FILE", Some("xtest.profraw")), // the name should change if we have multiple runs.
             // language/ir-testsuite's tests will stack overflow without this setting.
             ("RUST_MIN_STACK", Some("8388608")),
             // Recommend flags for use with grcov, with these flags removed: -Copt-level=0, -Clink-dead-code.
             // for more info see:  https://github.com/mozilla/grcov#example-how-to-generate-gcda-fiels-for-a-rust-project
-            (
-                "RUSTFLAGS",
-                Some("-Zprofile -Ccodegen-units=1 -Coverflow-checks=off"),
-            ),
+            ("RUSTFLAGS", Some("-Zinstrument-coverage")),
+            //(
+            //    "RUSTFLAGS",
+            //    Some("-Zinstrument-coverage -Zprofile -Ccodegen-units=1 -Coverflow-checks=off"),
+            //),
         ]
     } else {
         &[]
