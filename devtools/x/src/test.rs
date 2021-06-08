@@ -78,20 +78,24 @@ pub fn run(mut args: Args, xctx: XContext) -> Result<()> {
             ("RUSTFLAGS", Some("-Zinstrument-coverage")),
             ("RUST_MIN_STACK", Some("8388608")),
         ];
-        //info!("Running \"cargo clean\" before collecting coverage");
-        //let mut clean_cmd = Command::new("cargo");
-        //clean_cmd.arg("clean");
-        //clean_cmd.output()?;
+        info!("Running \"cargo clean\" before collecting coverage");
+        let mut clean_cmd = Command::new("cargo");
+        clean_cmd.arg("clean");
+        clean_cmd.output()?;
         info!("Performing a seperate \"cargo build\" before running tests and collecting coverage");
         let mut direct_args = Vec::new();
         args.build_args.add_args(&mut direct_args);
-        let mut build = CargoCommand::Build {
+        let build = CargoCommand::Build {
             cargo_config: xctx.config().cargo_config(),
             direct_args: direct_args.as_slice(),
             args: &args.args,
             env: build_env_vars,
         };
-        build.run_on_packages(&packages);
+        let build_result = build.run_on_packages(&packages);
+
+        if !args.no_fail_fast && build_result.is_err() {
+            return build_result;
+        }
 
         &[
             // A way to use -Z (unstable) flags with the stable compiler. See below.
