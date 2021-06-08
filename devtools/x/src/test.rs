@@ -70,26 +70,41 @@ pub fn run(mut args: Args, xctx: XContext) -> Result<()> {
         if !xctx.installer().install_via_cargo_if_needed("grcov") {
             return Err(anyhow!("Could not install grcov"));
         }
-        info!("Running \"cargo clean\" before collecting coverage");
-        let mut clean_cmd = Command::new("cargo");
-        clean_cmd.arg("clean");
-        clean_cmd.output()?;
-        &[
+        let build_env_vars = &[
             // A way to use -Z (unstable) flags with the stable compiler. See below.
             ("RUSTC_BOOTSTRAP", Some("1")),
-            // Recommend setting for grcov, avoids using the cargo cache.
-            ("CARGO_INCREMENTAL", Some("0")),
-            //determines how to tie the coverage data back to source, one per execution.
-            ("LLVM_PROFILE_FILE", Some("xtest.profraw")), // the name should change if we have multiple runs.
-            // language/ir-testsuite's tests will stack overflow without this setting.
-            ("RUST_MIN_STACK", Some("8388608")),
             // Recommend flags for use with grcov, with these flags removed: -Copt-level=0, -Clink-dead-code.
             // for more info see:  https://github.com/mozilla/grcov#example-how-to-generate-gcda-fiels-for-a-rust-project
             ("RUSTFLAGS", Some("-Zinstrument-coverage")),
-            //(
-            //    "RUSTFLAGS",
-            //    Some("-Zinstrument-coverage -Zprofile -Ccodegen-units=1 -Coverflow-checks=off"),
-            //),
+            ("RUST_MIN_STACK", Some("8388608")),
+        ];
+        //info!("Running \"cargo clean\" before collecting coverage");
+        //let mut clean_cmd = Command::new("cargo");
+        //clean_cmd.arg("clean");
+        //clean_cmd.output()?;
+        info!("Performing a seperate \"cargo build\" before running tests and collecting coverage");
+        let mut direct_args = Vec::new();
+        args.build_args.add_args(&mut direct_args);
+        let mut build = CargoCommand::Build {
+            cargo_config: xctx.config().cargo_config(),
+            direct_args: direct_args.as_slice(),
+            args: &args.args,
+            env: build_env_vars,
+        };
+        build.run_on_packages(&packages);
+
+        &[
+            // A way to use -Z (unstable) flags with the stable compiler. See below.
+            ("RUSTC_BOOTSTRAP", Some("1")),
+            // Recommend flags for use with grcov, with these flags removed: -Copt-level=0, -Clink-dead-code.
+            // for more info see:  https://github.com/mozilla/grcov#example-how-to-generate-gcda-fiels-for-a-rust-project
+            ("RUSTFLAGS", Some("-Zinstrument-coverage")),
+            // Recommend setting for grcov, avoids using the cargo cache.
+            //("CARGO_INCREMENTAL", Some("0")),
+            //determines how to tie the coverage data back to source, one per execution.
+            ("LLVM_PROFILE_FILE", Some("/tmp/xtest.profraw")), // the name should change if we have multiple runs.
+            // language/ir-testsuite's tests will stack overflow without this setting.
+            ("RUST_MIN_STACK", Some("8388608")),
         ]
     } else {
         &[]
@@ -204,9 +219,12 @@ fn exec_lcov(html_lcov_path: &Path) -> Result<()> {
 fn exec_grcov(html_cov_path: &Path) -> Result<()> {
     let debug_dir = project_root().join("target/debug/");
     let mut grcov_html = Command::new("grcov");
+    //grcov . --binary-path ./target/debug/ -s . -t html --branch --ignore-not-existing --ignore "/*" -o $HOME/output/
     grcov_html
         .current_dir(project_root())
         //output file from coverage: gcda files
+        .arg(project_root().as_os_str())
+        .arg("--binary-path")
         .arg(debug_dir.as_os_str())
         //source code location
         .arg("-s")
@@ -214,7 +232,7 @@ fn exec_grcov(html_cov_path: &Path) -> Result<()> {
         //html output
         .arg("-t")
         .arg("html")
-        .arg("--llvm")
+        //        .arg("--llvm")
         .arg("--branch")
         .arg("--ignore")
         .arg("/*")

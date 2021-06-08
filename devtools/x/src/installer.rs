@@ -5,7 +5,7 @@ use crate::{
     cargo::Cargo,
     config::{CargoConfig, CargoInstallation},
 };
-use log::{error, info};
+use log::{error, info, warn};
 use std::process::Command;
 
 pub struct Installer {
@@ -100,10 +100,17 @@ pub fn install_rustup_component_if_needed(name: &str) -> bool {
         false
     };
     if !installed {
+        info!("installing rustup component: {}", name);
         let mut cmd = Command::new("rustup");
-        cmd.args(&["component", "install", name]);
+        cmd.args(&["component", "add", name]);
+        if cmd.output().is_ok() {
+            info!("rustup component {} has been installed", name);
+        } else {
+            warn!("rustup component {} failed to install", name);
+        }
         cmd.output().is_ok()
     } else {
+        info!("rustup component {} is already installed", name);
         true
     }
 }
