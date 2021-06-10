@@ -1,0 +1,1 @@
+initSidebarItems({"constant":[["DIEM_ID_MODULE_IDENTIFIER","The Identifier for the DiemID module."]],"struct":[["DiemIdDomain",""],["DiemIdDomainEvent",""],["DiemIdDomainManager",""],["DiemIdDomains",""]]});
