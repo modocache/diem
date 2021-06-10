@@ -60,7 +60,7 @@ pub fn run(mut args: Args, xctx: XContext) -> Result<()> {
 
     let generate_coverage = args.html_cov_dir.is_some() || args.html_lcov_dir.is_some();
 
-    let llvm_profile_path: &str = "xtest-%p-%m.profraw";
+    let llvm_profile_path: &str = "target/debug/xtest-%p-%m.profraw";
 
     let env_vars: &[(&str, Option<&str>)] = if generate_coverage {
         if !xctx
@@ -78,13 +78,14 @@ pub fn run(mut args: Args, xctx: XContext) -> Result<()> {
             // Recommend flags for use with grcov, with these flags removed: -Copt-level=0, -Clink-dead-code.
             // for more info see:  https://github.com/mozilla/grcov#example-how-to-generate-gcda-fiels-for-a-rust-project
             ("RUSTFLAGS", Some("-Zinstrument-coverage")),
+            (
+                "LLVM_PROFILE_FILE",
+                Some("target/debug/ignored-%p-%m.profraw"),
+            ),
             ("RUST_MIN_STACK", Some("8388608")),
         ];
-        info!("Running \"cargo clean\" before collecting coverage");
-        //let mut clean_cmd = Command::new("cargo");
-        //clean_cmd.arg("clean");
-        //clean_cmd.output()?;
-        //info!("Performing a seperate \"cargo build\" before running tests and collecting coverage");
+
+        info!("Performing a seperate \"cargo build\" before running tests and collecting coverage");
 
         let mut direct_args = Vec::new();
         args.build_args.add_args(&mut direct_args);
@@ -110,7 +111,10 @@ pub fn run(mut args: Args, xctx: XContext) -> Result<()> {
             // Recommend setting for grcov, avoids using the cargo cache.
             //("CARGO_INCREMENTAL", Some("0")),
             //determines how to tie the coverage data back to source, one per execution.
-            ("LLVM_PROFILE_FILE", Some("xtest-%p-%m.profraw")), // the name should change if we have multiple runs.
+            (
+                "LLVM_PROFILE_FILE",
+                Some("target/debug/xtest-%p-%m.profraw"),
+            ), // the name should change if we have multiple runs.
             // language/ir-testsuite's tests will stack overflow without this setting.
             ("RUST_MIN_STACK", Some("8388608")),
         ]
