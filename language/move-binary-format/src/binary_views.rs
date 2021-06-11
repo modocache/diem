@@ -145,6 +145,15 @@ impl<'a> BinaryIndexedView<'a> {
         }
     }
 
+    pub fn struct_defs(&self) -> PartialVMResult<&[StructDefinition]> {
+        match self {
+            BinaryIndexedView::Module(module) => Ok(module.struct_defs()),
+            BinaryIndexedView::Script(_) => {
+                Err(PartialVMError::new(StatusCode::INVALID_OPERATION_IN_SCRIPT))
+            }
+        }
+    }
+
     pub fn struct_def_at(&self, idx: StructDefinitionIndex) -> PartialVMResult<&StructDefinition> {
         match self {
             BinaryIndexedView::Module(module) => Ok(module.struct_def_at(idx)),
