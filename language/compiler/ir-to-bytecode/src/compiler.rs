@@ -154,10 +154,6 @@ impl ControlFlowInfo {
 // In essence, it's a signature token with a "bottom" type added
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum InferredType {
-    // Result of the compiler failing to infer the type of an expression
-    // Not translatable to a signature token
-    Anything,
-
     // Signature tokens
     Bool,
     U8,
@@ -232,7 +228,6 @@ impl InferredType {
 
     fn get_struct_handle(&self) -> Result<(StructHandleIndex, &Vec<InferredType>)> {
         match self {
-            InferredType::Anything => bail!("could not infer struct type"),
             InferredType::Bool => bail!("no struct type for Bool"),
             InferredType::U8 => bail!("no struct type for U8"),
             InferredType::U64 => bail!("no struct type for U64"),
@@ -271,7 +266,6 @@ impl InferredType {
                     "ICE unsubstituted type parameter when converting back to signature tokens"
                 ),
             },
-            I::Anything => bail!("Could not infer type"),
         })
     }
 
@@ -1278,13 +1272,13 @@ fn infer_int_bin_op_result_ty(
 ) -> InferredType {
     use InferredType as I;
     if tys1.len() != 1 || tys2.len() != 1 {
-        return I::Anything;
+        panic!("could not infer bin op result type");
     }
     match (&tys1[0], &tys2[0]) {
         (I::U8, I::U8) => I::U8,
         (I::U64, I::U64) => I::U64,
         (I::U128, I::U128) => I::U128,
-        _ => I::Anything,
+        _ => panic!("could not infer bin op result type"),
     }
 }
 
@@ -1506,7 +1500,7 @@ fn compile_expression(
             match loc_type {
                 Some(InferredType::MutableReference(sig_ref_token)) => vec_deque![*sig_ref_token],
                 Some(InferredType::Reference(sig_ref_token)) => vec_deque![*sig_ref_token],
-                _ => vec_deque![InferredType::Anything],
+                _ => panic!("could not infer dereference type"),
             }
         }
         Exp_::Borrow {
@@ -1687,7 +1681,9 @@ fn compile_call(
                 }
                 Builtin::VecPack(tys, num) => {
                     let tokens = compile_types(context, function_frame.type_parameters(), &tys)?;
-                    let type_actuals_id = context.signature_index(Signature(tokens))?;
+                    let signature = Signature(tokens);
+                    let ty = InferredType::from_signature_token(&signature.0.first().unwrap());
+                    let type_actuals_id = context.signature_index(signature)?;
                     push_instr!(call.loc, Bytecode::VecPack(type_actuals_id, num));
 
                     for _ in 0..num {
@@ -1695,9 +1691,7 @@ fn compile_call(
                     }
                     function_frame.push()?; // push the return value
 
-                    // NOTE: we do actually infer the type here because we want to allow the type
-                    // actuals to have multiple tokens in order to test our bytecode verifier passes
-                    vec_deque![InferredType::Anything]
+                    vec_deque![InferredType::Vector(Box::new(ty))]
                 }
                 Builtin::VecLen(tys) => {
                     let tokens = compile_types(context, function_frame.type_parameters(), &tys)?;
@@ -1718,7 +1712,7 @@ fn compile_call(
                     function_frame.push()?; // push the return value
 
                     // NOTE: similar to VecEmpty, we do actually infer the type here
-                    vec_deque![InferredType::Anything]
+                    panic!("could not infer VecImmBorrow type");
                 }
                 Builtin::VecMutBorrow(tys) => {
                     let tokens = compile_types(context, function_frame.type_parameters(), &tys)?;
@@ -1730,7 +1724,7 @@ fn compile_call(
                     function_frame.push()?; // push the return value
 
                     // NOTE: similar to VecEmpty, we do actually infer the type here
-                    vec_deque![InferredType::Anything]
+                    panic!("could not infer VecMutBorrow type");
                 }
                 Builtin::VecPushBack(tys) => {
                     let tokens = compile_types(context, function_frame.type_parameters(), &tys)?;
@@ -1743,12 +1737,15 @@ fn compile_call(
                 }
                 Builtin::VecPopBack(tys) => {
                     let tokens = compile_types(context, function_frame.type_parameters(), &tys)?;
-                    let type_actuals_id = context.signature_index(Signature(tokens))?;
+                    let signature = Signature(tokens);
+                    let ty = InferredType::from_signature_token(&signature.0.first().unwrap());
+                    let type_actuals_id = context.signature_index(signature)?;
                     push_instr!(call.loc, Bytecode::VecPopBack(type_actuals_id));
 
                     function_frame.pop()?; // pop the vector ref
                     function_frame.push()?; // push the value
-                    vec_deque![InferredType::Anything]
+
+                    vec_deque![ty]
                 }
                 Builtin::VecUnpack(tys, num) => {
                     let tokens = compile_types(context, function_frame.type_parameters(), &tys)?;
@@ -1779,7 +1776,7 @@ fn compile_call(
                         Some(InferredType::Reference(inner_token))
                         | Some(InferredType::MutableReference(inner_token)) => inner_token,
                         // Incorrect call
-                        _ => Box::new(InferredType::Anything),
+                        _ => panic!("could not infer freeze type"),
                     };
                     vec_deque![InferredType::Reference(inner_token)]
                 }
