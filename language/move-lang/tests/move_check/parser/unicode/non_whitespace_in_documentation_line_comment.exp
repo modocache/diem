@@ -1,0 +1,6 @@
+error[E01001]: invalid character
+  ┌─ tests/move_check/parser/unicode/non_whitespace_in_documentation_line_comment.move:3:65
+  │
+3 │ /// For now, Unicode in documentation comments like this one is 🆖.
+  │                                                                 ^^ Invalid character '🆖' in documentation comment
+

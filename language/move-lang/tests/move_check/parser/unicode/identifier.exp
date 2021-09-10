@@ -1,0 +1,6 @@
+error[E01001]: invalid character
+  ┌─ tests/move_check/parser/unicode/identifier.move:5:4
+  │
+5 │    ф
+  │    ^ Invalid character 'ф': only ASCII printable characters, tabs (\t), and line endings (\n) are permitted outside of comments.
+

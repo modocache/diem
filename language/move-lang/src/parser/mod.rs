@@ -125,23 +125,15 @@ fn parse_file(
     let mut diags = Diagnostics::new();
     let mut f = File::open(fname.as_str())
         .map_err(|err| std::io::Error::new(err.kind(), format!("{}: {}", err, fname)))?;
-    let mut source_buffer = String::new();
-    f.read_to_string(&mut source_buffer)?;
-    let buffer = match verify_string(fname, &source_buffer) {
-        Err(ds) => {
-            diags.extend(ds);
-            files.insert(fname, source_buffer);
-            return Ok((vec![], MatchedFileCommentMap::new(), diags));
-        }
-        Ok(()) => &source_buffer,
-    };
-    let (defs, comments) = match parse_file_string(fname, buffer) {
+    let mut buffer = String::new();
+    f.read_to_string(&mut buffer)?;
+    let (defs, comments) = match parse_file_string(fname, &buffer) {
         Ok(defs_and_comments) => defs_and_comments,
         Err(ds) => {
             diags.extend(ds);
             (vec![], MatchedFileCommentMap::new())
         }
     };
-    files.insert(fname, source_buffer);
+    files.insert(fname, buffer);
     Ok((defs, comments, diags))
 }

@@ -7,6 +7,10 @@ use crate::{
     parser::syntax::make_loc,
     FileCommentMap, MatchedFileCommentMap,
 };
+use move_command_line_common::character_sets::{
+    is_permitted, is_permitted_vertical_whitespace, is_permitted_whitespace,
+    is_unicode_vertical_whitespace, is_unicode_whitespace,
+};
 use move_ir_types::location::Loc;
 use move_symbol_pool::Symbol;
 use std::fmt;
@@ -205,6 +209,150 @@ impl<'input> Lexer<'input> {
         self.prev_end
     }
 
+    fn offset_while(
+        &mut self,
+        offset: usize,
+        f: impl Fn(Symbol, usize, char) -> Result<bool, Diagnostic>,
+    ) -> Result<usize, Diagnostic> {
+        let mut result = offset;
+        let mut chars = self.text[result..].char_indices();
+        while let Some((i, c)) = chars.next() {
+            let idx = offset + i;
+            if f(self.file, idx, c)? {
+                result = idx + 1;
+            } else {
+                result = idx;
+                break;
+            }
+        }
+        {}
+        Ok(result)
+    }
+
+    fn offset_whitespace(&mut self, offset: usize) -> Result<usize, Diagnostic> {
+        self.offset_while(offset, |file, i, c| {
+            if is_permitted_whitespace(c) {
+                Ok(true)
+            } else if is_unicode_whitespace(c) {
+                let location = make_loc(file, i, i + 1);
+                let message = format!("Invalid whitespace character {:?}", c);
+                Err(diag!(Syntax::InvalidCharacter, (location, message)))
+            } else {
+                Ok(false)
+            }
+        })
+    }
+
+    fn offset_single_line_comment(&mut self, offset: usize) -> Result<usize, Diagnostic> {
+        let mut result = offset;
+        if self.text[result..].starts_with("//") {
+            let is_doc =
+                self.text[result..].starts_with("///") && !self.text[result..].starts_with("////");
+            result += if is_doc { 3 } else { 2 };
+
+            result = self.offset_while(result, |file, i, c| {
+                if is_permitted_vertical_whitespace(c) {
+                    Ok(false)
+                } else if is_unicode_vertical_whitespace(c) {
+                    let location = make_loc(file, i, i + 1);
+                    let message = format!("Invalid whitespace character {:?}", c);
+                    Err(diag!(Syntax::InvalidCharacter, (location, message)))
+                } else if is_doc && !is_permitted(c) {
+                    let location = make_loc(file, i, i + 1);
+                    let message = format!("Invalid character {:?} in documentation comment", c);
+                    Err(diag!(Syntax::InvalidCharacter, (location, message)))
+                } else {
+                    Ok(true)
+                }
+            })?;
+
+            // If this was a documentation comment, record it in our map.
+            if is_doc {
+                self.doc_comments.insert(
+                    (offset as u32, result as u32),
+                    self.text[(offset + 3)..result].to_string(),
+                );
+            }
+        }
+        Ok(result)
+    }
+
+    fn offset_multi_line_comment(&mut self, offset: usize) -> Result<usize, Diagnostic> {
+        // Strip multi-line comments like '/* ... */' or '/** ... */'.
+        // These can be nested, as in '/* /* ... */ */', so record the start
+        // locations of each nested comment as a stack. The boolean indicates
+        // whether it's a documentation comment.
+        let mut result = offset;
+        let mut locs: Vec<(usize, bool)> = vec![];
+        loop {
+            result = self.offset_while(result, |file, i, c| match c {
+                '/' | '*' => Ok(false),
+                _ if is_unicode_whitespace(c) && !is_permitted_whitespace(c) => {
+                    let location = make_loc(file, i, i + 1);
+                    let message = format!("Invalid whitespace character {:?}", c);
+                    Err(diag!(Syntax::InvalidCharacter, (location, message)))
+                }
+                _ if !is_permitted(c) => {
+                    let is_doc = locs.last().unwrap().1;
+                    if is_doc {
+                        let location = make_loc(file, i, i + 1);
+                        let message = format!("Invalid character {:?} in documentation comment", c);
+                        Err(diag!(Syntax::InvalidCharacter, (location, message)))
+                    } else {
+                        Ok(true)
+                    }
+                }
+                _ => Ok(true),
+            })?;
+            if self.text[result..].is_empty() {
+                // We've reached the end of string while searching for a
+                // terminating '*/'.
+                let loc = *locs.last().unwrap();
+                // Highlight the '/**' if it's a documentation comment, or the '/*'
+                // otherwise.
+                let location = make_loc(self.file, loc.0, loc.0 + if loc.1 { 3 } else { 2 });
+                return Err(diag!(
+                    Syntax::InvalidDocComment,
+                    (location, "Unclosed block comment"),
+                ));
+            } else if self.text[result..].starts_with("/*") {
+                // We've found a (perhaps nested) multi-line comment.
+                result += 2;
+
+                // Check if this is a documentation comment: '/**', but not '/***'.
+                // A documentation comment cannot be nested within another comment.
+                let is_doc = self.text[result..].starts_with('*')
+                    && !self.text[result..].starts_with("**")
+                    && locs.is_empty();
+
+                locs.push((result - 2, is_doc));
+            } else if self.text[result..].starts_with("*/") {
+                // We've found a multi-line comment terminator that ends
+                // our innermost nested comment.
+                let loc = locs.pop().unwrap();
+                result += 2;
+
+                // If this was a documentation comment, record it in our map.
+                if loc.1 {
+                    self.doc_comments.insert(
+                        (loc.0 as u32, result as u32),
+                        self.text[(loc.0 + 3)..(result - 2)].to_string(),
+                    );
+                }
+
+                // If this terminated our last comment, exit the loop.
+                if locs.is_empty() {
+                    break;
+                }
+            } else {
+                // This is a solitary '/' or '*' that isn't part of any comment delimiter.
+                // Skip over it.
+                result += 1;
+            }
+        }
+        Ok(result)
+    }
+
     /// Strips line and block comments from input source, and collects documentation comments,
     /// putting them into a map indexed by the span of the comment region. Comments in the original
     /// source will be replaced by spaces, such that positions of source items stay unchanged.
@@ -215,120 +363,43 @@ impl<'input> Lexer<'input> {
     /// (`/// .. <newline>` and `/** .. */`) will be not included in extracted comment string. The
     /// span in the returned map, however, covers the whole region of the comment, including the
     /// delimiters.
-    fn trim_whitespace_and_comments(&mut self, offset: usize) -> Result<&'input str, Diagnostic> {
-        let mut text = &self.text[offset..];
-
-        // A helper function to compute the index of the start of the given substring.
-        let len = text.len();
-        let get_offset = |substring: &str| offset + len - substring.len();
-
+    fn offset_whitespace_and_comments(&mut self, offset: usize) -> Result<usize, Diagnostic> {
         // Loop until we find text that isn't whitespace, and that isn't part of
         // a multi-line or single-line comment.
+        let mut result = offset;
         loop {
-            // Trim only the whitespace characters we recognize: newline, tab, and space.
-            text = text.trim_start_matches(|c: char| matches!(c, '\n' | '\t' | ' '));
-
-            if text.starts_with("/*") {
-                // Strip multi-line comments like '/* ... */' or '/** ... */'.
-                // These can be nested, as in '/* /* ... */ */', so record the
-                // start locations of each nested comment as a stack. The
-                // boolean indicates whether it's a documentation comment.
-                let mut locs: Vec<(usize, bool)> = vec![];
-                loop {
-                    text = text.trim_start_matches(|c: char| c != '/' && c != '*');
-                    if text.is_empty() {
-                        // We've reached the end of string while searching for a
-                        // terminating '*/'.
-                        let loc = *locs.last().unwrap();
-                        // Highlight the '/**' if it's a documentation comment, or the '/*'
-                        // otherwise.
-                        let location =
-                            make_loc(self.file, loc.0, loc.0 + if loc.1 { 3 } else { 2 });
-                        return Err(diag!(
-                            Syntax::InvalidDocComment,
-                            (location, "Unclosed block comment"),
-                        ));
-                    } else if text.starts_with("/*") {
-                        // We've found a (perhaps nested) multi-line comment.
-                        let start = get_offset(text);
-                        text = &text[2..];
-
-                        // Check if this is a documentation comment: '/**', but not '/***'.
-                        // A documentation comment cannot be nested within another comment.
-                        let is_doc =
-                            text.starts_with('*') && !text.starts_with("**") && locs.is_empty();
-
-                        locs.push((start, is_doc));
-                    } else if text.starts_with("*/") {
-                        // We've found a multi-line comment terminator that ends
-                        // our innermost nested comment.
-                        let loc = locs.pop().unwrap();
-                        text = &text[2..];
-
-                        // If this was a documentation comment, record it in our map.
-                        if loc.1 {
-                            let end = get_offset(text);
-                            self.doc_comments.insert(
-                                (loc.0 as u32, end as u32),
-                                self.text[(loc.0 + 3)..(end - 2)].to_string(),
-                            );
-                        }
-
-                        // If this terminated our last comment, exit the loop.
-                        if locs.is_empty() {
-                            break;
-                        }
-                    } else {
-                        // This is a solitary '/' or '*' that isn't part of any comment delimiter.
-                        // Skip over it.
-                        text = &text[1..];
-                    }
-                }
-
+            result = self.offset_whitespace(result)?;
+            if self.text[result..].starts_with("/*") {
+                result = self.offset_multi_line_comment(result)?;
                 // Continue the loop immediately after the multi-line comment.
                 // There may be whitespace or another comment following this one.
                 continue;
-            } else if text.starts_with("//") {
-                let start = get_offset(text);
-                let is_doc = text.starts_with("///") && !text.starts_with("////");
-                text = text.trim_start_matches(|c: char| c != '\n');
-
-                // If this was a documentation comment, record it in our map.
-                if is_doc {
-                    let end = get_offset(text);
-                    self.doc_comments.insert(
-                        (start as u32, end as u32),
-                        self.text[(start + 3)..end].to_string(),
-                    );
-                }
-
+            } else if self.text[result..].starts_with("//") {
+                result = self.offset_single_line_comment(result)?;
                 // Continue the loop on the following line, which may contain leading
                 // whitespace or comments of its own.
                 continue;
             }
             break;
         }
-        Ok(text)
+        Ok(result)
     }
 
     // Look ahead to the next token after the current one and return it without advancing
     // the state of the lexer.
     pub fn lookahead(&mut self) -> Result<Tok, Diagnostic> {
-        let text = self.trim_whitespace_and_comments(self.cur_end)?;
-        let offset = self.text.len() - text.len();
-        let (tok, _) = find_token(self.file, text, offset)?;
+        let offset = self.offset_whitespace_and_comments(self.cur_end)?;
+        let (tok, _) = find_token(self.file, &self.text[offset..], offset)?;
         Ok(tok)
     }
 
     // Look ahead to the next two tokens after the current one and return them without advancing
     // the state of the lexer.
     pub fn lookahead2(&mut self) -> Result<(Tok, Tok), Diagnostic> {
-        let text = self.trim_whitespace_and_comments(self.cur_end)?;
-        let offset = self.text.len() - text.len();
-        let (first, length) = find_token(self.file, text, offset)?;
-        let text2 = self.trim_whitespace_and_comments(offset + length)?;
-        let offset2 = self.text.len() - text2.len();
-        let (second, _) = find_token(self.file, text2, offset2)?;
+        let offset = self.offset_whitespace_and_comments(self.cur_end)?;
+        let (first, length) = find_token(self.file, &self.text[offset..], offset)?;
+        let offset2 = self.offset_whitespace_and_comments(offset + length)?;
+        let (second, _) = find_token(self.file, &self.text[offset2..], offset2)?;
         Ok((first, second))
     }
 
@@ -381,9 +452,8 @@ impl<'input> Lexer<'input> {
 
     pub fn advance(&mut self) -> Result<(), Diagnostic> {
         self.prev_end = self.cur_end;
-        let text = self.trim_whitespace_and_comments(self.cur_end)?;
-        self.cur_start = self.text.len() - text.len();
-        let (token, len) = find_token(self.file, text, self.cur_start)?;
+        self.cur_start = self.offset_whitespace_and_comments(self.cur_end)?;
+        let (token, len) = find_token(self.file, &self.text[self.cur_start..], self.cur_start)?;
         self.cur_end = self.cur_start + len;
         self.token = token;
         Ok(())
@@ -527,10 +597,12 @@ fn find_token(file: Symbol, text: &str, start_offset: usize) -> Result<(Tok, usi
         '@' => (Tok::AtSign, 1),
         _ => {
             let loc = make_loc(file, start_offset, start_offset);
-            return Err(diag!(
-                Syntax::InvalidCharacter,
-                (loc, format!("Invalid character: '{}'", c))
-            ));
+            let message = if is_permitted(c) {
+                format!("Invalid character: {:?}", c)
+            } else {
+                format!("Invalid character {:?}: only ASCII printable characters, tabs (\\t), and line endings (\\n) are permitted outside of comments.", c)
+            };
+            return Err(diag!(Syntax::InvalidCharacter, (loc, message)));
         }
     };
 

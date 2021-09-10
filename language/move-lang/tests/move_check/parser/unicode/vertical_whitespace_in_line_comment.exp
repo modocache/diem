@@ -1,0 +1,6 @@
+error[E01001]: invalid character
+  ┌─ tests/move_check/parser/unicode/vertical_whitespace_in_line_comment.move:2:51
+  │
+2 │   // This line contains a `U+000D CARRIAGE RETURN`<
+  │                                                    Invalid whitespace character '\r'
+

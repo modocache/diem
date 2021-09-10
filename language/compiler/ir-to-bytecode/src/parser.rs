@@ -12,7 +12,7 @@ use codespan_reporting::{
     },
 };
 use ir_to_bytecode_syntax::syntax::{self, ParseError};
-use move_command_line_common::character_sets::is_permitted_char;
+use move_command_line_common::character_sets::is_permitted;
 use move_ir_types::{ast, location::*};
 use move_symbol_pool::Symbol;
 
@@ -24,7 +24,7 @@ use move_symbol_pool::Symbol;
 fn verify_string(string: &str) -> Result<()> {
     string
         .chars()
-        .find(|c| !is_permitted_char(*c))
+        .find(|c| !is_permitted(*c))
         .map_or(Ok(()), |chr| {
             bail!(
                 "Parser Error: invalid character {} found when reading file.\

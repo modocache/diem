@@ -1,0 +1,6 @@
+error[E01001]: invalid character
+  ┌─ tests/move_check/parser/unicode/horizontal_whitespace_in_multiline_comment.move:2:6
+  │
+2 │   /*   */
+  │      ^ Invalid whitespace character '\u{200a}'
+
