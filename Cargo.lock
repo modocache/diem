@@ -4872,6 +4872,7 @@ dependencies = [
  "lsp-types",
  "serde_json",
  "structopt 0.3.21",
+ "url",
 ]
 
 [[package]]
