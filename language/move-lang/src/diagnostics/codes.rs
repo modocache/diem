@@ -149,7 +149,7 @@ codes!(
     ],
     // errors for typing rules. mostly typing/translate
     TypeSafety: [
-        Visibility: { msg: "restricted visibility", severity: NonblockingError },
+        Visibility: { msg: "restricted visibility", severity: BlockingError },
         ScriptContext: { msg: "requires script context", severity: NonblockingError },
         BuiltinOperation: { msg: "built-in operation not supported", severity: BlockingError },
         ExpectedBaseType: { msg: "expected a single non-reference type", severity: BlockingError },
