@@ -5011,6 +5011,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "move-documentation-book-transactional-tests"
+version = "0.0.0"
+dependencies = [
+ "datatest-stable",
+ "diem-workspace-hack",
+ "move-transactional-test-runner",
+]
+
+[[package]]
 name = "move-explain"
 version = "0.1.0"
 dependencies = [

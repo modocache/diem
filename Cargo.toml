@@ -81,6 +81,7 @@ members = [
     "language/diem-vm",
     "language/diem-vm/mvhashmap",
     "language/diem-vm/parallel-executor",
+    "language/documentation/book/transactional-tests",
     "language/e2e-testsuite",
     "language/ir-testsuite",
     "language/move-analyzer",
