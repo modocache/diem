@@ -1,6 +1,7 @@
 // Copyright (c) The Diem Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+// No unsafe code.
 #![forbid(unsafe_code)]
 
 #[macro_use(sp)]
