@@ -159,17 +159,32 @@ impl fmt::Display for Tok {
 }
 
 pub struct Lexer<'input> {
+    /// The input text buffer.
     text: &'input str,
+    /// A hash that uniquely identifies the source of the text buffer.
     file_hash: FileHash,
+    /// A map of documentation comments that is built up as the lexer advances.
     doc_comments: FileCommentMap,
+    /// A map of documentation comments that haved matched to some node in the syntax tree.
     matched_doc_comments: MatchedFileCommentMap,
+    /// The offset into the text buffer that delimits the end of the previously lexed slice of text.
     prev_end: usize,
+    /// The offset into the text buffer that delimits the start of the most recently lexed slice of text.
     cur_start: usize,
+    /// The offset into the text buffer that delimits the end of the most recently lexed slice of text.
     cur_end: usize,
+    /// The token kind of the most recently lexed slice of text.
     token: Tok,
 }
 
 impl<'input> Lexer<'input> {
+    /// Initializes a lexer with the given input string and a hash that uniquely identifies
+    /// the buffer.
+    ///
+    /// The input string is not read from, and the lexer's initial token is set to EOF. To "prime"
+    /// the lexer with its first token, call the [`advance()`] method.
+    ///
+    /// [`advance()`]: crate::parser::lexer::Lexer::advance
     pub fn new(text: &'input str, file_hash: FileHash) -> Lexer<'input> {
         Lexer {
             text,
@@ -203,18 +218,16 @@ impl<'input> Lexer<'input> {
         self.prev_end
     }
 
-    /// Strips line and block comments from input source, and collects documentation comments,
-    /// putting them into a map indexed by the span of the comment region. Comments in the original
-    /// source will be replaced by spaces, such that positions of source items stay unchanged.
-    /// Block comments can be nested.
+    /// Advance past line and block comments in the input source and collect documentation comments
+    /// into a map indexed by the span of the comment region. Block comments can be nested.
     ///
-    /// Documentation comments are comments which start with
-    /// `///` or `/**`, but not `////` or `/***`. The actually comment delimiters
-    /// (`/// .. <newline>` and `/** .. */`) will be not included in extracted comment string. The
-    /// span in the returned map, however, covers the whole region of the comment, including the
-    /// delimiters.
-    fn trim_whitespace_and_comments(&mut self, offset: usize) -> Result<&'input str, Diagnostic> {
+    /// Documentation comments are comments which start with `///` or `/**`, but not `////` or
+    /// `/***`. The actual comment delimiters (`/// .. <newline>` and `/** .. */`) will be not
+    /// included in extracted comment string. The span in the returned map, however, covers the
+    /// whole region of the comment, including the delimiters.
+    fn trim_whitespace_and_comments(&self, offset: usize) -> Result<(&'input str, FileCommentMap), Diagnostic> {
         let mut text = &self.text[offset..];
+        let mut comment_map = FileCommentMap::new();
 
         // A helper function to compute the index of the start of the given substring.
         let len = text.len();
@@ -266,12 +279,11 @@ impl<'input> Lexer<'input> {
                         // If this was a documentation comment, record it in our map.
                         if loc.1 {
                             let end = get_offset(text);
-                            self.doc_comments.insert(
+                            comment_map.insert(
                                 (loc.0 as u32, end as u32),
                                 self.text[(loc.0 + 3)..(end - 2)].to_string(),
                             );
                         }
-
                         // If this terminated our last comment, exit the loop.
                         if locs.is_empty() {
                             break;
@@ -294,7 +306,7 @@ impl<'input> Lexer<'input> {
                 // If this was a documentation comment, record it in our map.
                 if is_doc {
                     let end = get_offset(text);
-                    self.doc_comments.insert(
+                    comment_map.insert(
                         (start as u32, end as u32),
                         self.text[(start + 3)..end].to_string(),
                     );
@@ -306,31 +318,28 @@ impl<'input> Lexer<'input> {
             }
             break;
         }
-        Ok(text)
-    }
-
-    // Look ahead to the next token after the current one and return it, and its starting offset,
-    // without advancing the state of the lexer.
-    pub fn lookahead_with_start_loc(&mut self) -> Result<(Tok, usize), Diagnostic> {
-        let text = self.trim_whitespace_and_comments(self.cur_end)?;
-        let next_start = self.text.len() - text.len();
-        let (tok, _) = find_token(self.file_hash, text, next_start)?;
-        Ok((tok, next_start))
+        Ok((text, comment_map))
     }
 
     // Look ahead to the next token after the current one and return it without advancing
     // the state of the lexer.
     pub fn lookahead(&mut self) -> Result<Tok, Diagnostic> {
-        Ok(self.lookahead_with_start_loc()?.0)
+        let (text, mut comment_map) = self.trim_whitespace_and_comments(self.cur_end)?;
+        self.doc_comments.append(&mut comment_map);
+        let next_start = self.text.len() - text.len();
+        let (tok, _) = find_token(self.file_hash, text, next_start)?;
+        Ok(tok)
     }
 
     // Look ahead to the next two tokens after the current one and return them without advancing
     // the state of the lexer.
     pub fn lookahead2(&mut self) -> Result<(Tok, Tok), Diagnostic> {
-        let text = self.trim_whitespace_and_comments(self.cur_end)?;
+        let (text, mut comment_map) = self.trim_whitespace_and_comments(self.cur_end)?;
+        self.doc_comments.append(&mut comment_map);
         let offset = self.text.len() - text.len();
         let (first, length) = find_token(self.file_hash, text, offset)?;
-        let text2 = self.trim_whitespace_and_comments(offset + length)?;
+        let (text2, mut comment_map2) = self.trim_whitespace_and_comments(offset + length)?;
+        self.doc_comments.append(&mut comment_map2);
         let offset2 = self.text.len() - text2.len();
         let (second, _) = find_token(self.file_hash, text2, offset2)?;
         Ok((first, second))
@@ -385,7 +394,8 @@ impl<'input> Lexer<'input> {
 
     pub fn advance(&mut self) -> Result<(), Diagnostic> {
         self.prev_end = self.cur_end;
-        let text = self.trim_whitespace_and_comments(self.cur_end)?;
+        let (text, mut comment_map) = self.trim_whitespace_and_comments(self.cur_end)?;
+        self.doc_comments.append(&mut comment_map);
         self.cur_start = self.text.len() - text.len();
         let (token, len) = find_token(self.file_hash, text, self.cur_start)?;
         self.cur_end = self.cur_start + len;
