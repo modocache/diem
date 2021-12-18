@@ -132,14 +132,6 @@ fn consume_token_(
     }
 }
 
-// let unexp_loc = current_token_loc(tokens);
-// let unexp_msg = format!("Unexpected {}", current_token_error_string(tokens));
-
-// let end_loc = tokens.previous_end_loc();
-// let addr_loc = make_loc(tokens.file_hash(), start_loc, end_loc);
-// let exp_msg = format!("Expected '::' {}", case);
-// Err(vec![(unexp_loc, unexp_msg), (addr_loc, exp_msg)])
-
 // Check for the identifier token with specified value and return an error if it does not match.
 fn consume_identifier(tokens: &mut Lexer, value: &str) -> Result<(), Diagnostic> {
     if tokens.peek() == Tok::Identifier && tokens.content() == value {
@@ -158,8 +150,8 @@ fn consume_optional_token_with_loc(
 ) -> Result<Option<Loc>, Diagnostic> {
     if tokens.peek() == tok {
         let start_loc = tokens.start_loc();
+        let end_loc = tokens.end_loc();
         tokens.advance()?;
-        let end_loc = tokens.previous_end_loc();
         Ok(Some(make_loc(tokens.file_hash(), start_loc, end_loc)))
     } else {
         Ok(None)
@@ -280,9 +272,9 @@ fn parse_identifier(context: &mut Context) -> Result<Name, Diagnostic> {
         return Err(unexpected_token_error(context.tokens, "an identifier"));
     }
     let start_loc = context.tokens.start_loc();
+    let end_loc = context.tokens.end_loc();
     let id = context.tokens.content().into();
     context.tokens.advance()?;
-    let end_loc = context.tokens.previous_end_loc();
     Ok(spanned(context.tokens.file_hash(), start_loc, end_loc, id))
 }
 
@@ -1251,8 +1243,8 @@ fn parse_binop_exp(context: &mut Context, lhs: Exp, min_prec: u32) -> Result<Exp
         // Parse the operator.
         let op_start_loc = context.tokens.start_loc();
         let op_token = context.tokens.peek();
+        let op_end_loc = context.tokens.end_loc();
         context.tokens.advance()?;
-        let op_end_loc = context.tokens.previous_end_loc();
 
         let mut rhs = parse_unary_exp(context)?;
 
@@ -1292,7 +1284,7 @@ fn parse_binop_exp(context: &mut Context, lhs: Exp, min_prec: u32) -> Result<Exp
         let sp_op = spanned(context.tokens.file_hash(), op_start_loc, op_end_loc, op);
 
         let start_loc = result.loc.start() as usize;
-        let end_loc = context.tokens.previous_end_loc();
+        let end_loc = rhs.loc.end() as usize;
         let e = Exp_::BinopExp(Box::new(result), sp_op, Box::new(rhs));
         result = spanned(context.tokens.file_hash(), start_loc, end_loc, e);
     }
@@ -2081,11 +2073,12 @@ fn parse_friend_decl(
     let start_loc = context.tokens.start_loc();
     consume_token(context.tokens, Tok::Friend)?;
     let friend = parse_name_access_chain(context, || "a friend declaration")?;
+    let end_loc = context.tokens.end_loc();
     consume_token(context.tokens, Tok::Semicolon)?;
     let loc = make_loc(
         context.tokens.file_hash(),
         start_loc,
-        context.tokens.previous_end_loc(),
+        end_loc,
     );
     Ok(FriendDecl {
         attributes,
@@ -2265,11 +2258,12 @@ fn parse_module(
             }
         })
     }
+    let end_loc = context.tokens.end_loc();
     consume_token(context.tokens, Tok::RBrace)?;
     let loc = make_loc(
         context.tokens.file_hash(),
         start_loc,
-        context.tokens.previous_end_loc(),
+        end_loc,
     );
     Ok(ModuleDefinition {
         attributes,
@@ -2338,12 +2332,13 @@ fn parse_script(
         let msg = "Unexpected characters after end of 'script' function";
         return Err(diag!(Syntax::UnexpectedToken, (loc, msg)));
     }
+    let end_loc = context.tokens.end_loc();
     consume_token(context.tokens, Tok::RBrace)?;
 
     let loc = make_loc(
         context.tokens.file_hash(),
         start_loc,
-        context.tokens.previous_end_loc(),
+        end_loc,
     );
     Ok(Script {
         attributes: script_attributes,
@@ -2430,11 +2425,12 @@ fn parse_spec_block(
     while context.tokens.peek() != Tok::RBrace {
         members.push(parse_spec_block_member(context)?);
     }
+    let end_loc = context.tokens.end_loc();
     consume_token(context.tokens, Tok::RBrace)?;
     Ok(spanned(
         context.tokens.file_hash(),
         start_loc,
-        context.tokens.previous_end_loc(),
+        end_loc,
         SpecBlock_ {
             attributes,
             target,

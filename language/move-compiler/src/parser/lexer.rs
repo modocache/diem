@@ -214,6 +214,10 @@ impl<'input> Lexer<'input> {
         self.cur_start
     }
 
+    pub fn end_loc(&self) -> usize {
+        self.cur_end
+    }
+
     pub fn previous_end_loc(&self) -> usize {
         self.prev_end
     }
