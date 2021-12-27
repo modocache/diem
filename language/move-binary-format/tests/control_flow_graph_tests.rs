@@ -1,11 +1,41 @@
 // Copyright (c) The Diem Core Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::unit_tests::testutils::compile_script_string;
+use anyhow::Result;
 use move_binary_format::{
     access::ScriptAccess,
     control_flow_graph::{ControlFlowGraph, VMControlFlowGraph},
+    errors::{Location, VMError},
+    file_format::CompiledScript,
 };
+use move_bytecode_verifier::verify_script;
+use move_ir_to_bytecode::{compiler::compile_script, parser::parse_script};
+
+fn compile_script_string_impl(code: &str) -> Result<(CompiledScript, Option<VMError>)> {
+    let parsed_script = parse_script(code).unwrap();
+    let script = compile_script(parsed_script, &[])?.0;
+
+    let mut serialized_script = Vec::<u8>::new();
+    script.serialize(&mut serialized_script)?;
+    let deserialized_script = CompiledScript::deserialize(&serialized_script)
+        .map_err(|e| e.finish(Location::Undefined).into_vm_status())?;
+    assert_eq!(script, deserialized_script);
+
+    Ok(match verify_script(&script) {
+        Ok(_) => (script, None),
+        Err(error) => (script, Some(error)),
+    })
+}
+
+fn compile_script_string_and_assert_no_error(code: &str) -> Result<CompiledScript> {
+    let (verified_script, verification_error) = compile_script_string_impl(code)?;
+    assert!(verification_error.is_none());
+    Ok(verified_script)
+}
+
+fn compile_script_string(code: &str) -> Result<CompiledScript> {
+    compile_script_string_and_assert_no_error(code)
+}
 
 #[test]
 fn cfg_compile_script_ret() {

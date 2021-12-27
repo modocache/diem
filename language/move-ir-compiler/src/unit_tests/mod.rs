@@ -5,5 +5,4 @@
 #[macro_use]
 pub(crate) mod testutils;
 
-mod cfg_tests;
 mod function_tests;
